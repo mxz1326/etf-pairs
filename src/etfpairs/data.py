@@ -67,3 +67,31 @@ def tracking_difference(tr: pd.DataFrame, a: str = "IOZ", b: str = "STW") -> flo
     """Annualised total-return difference a - b over the whole sample, in basis points."""
     years = (tr.index[-1] - tr.index[0]).days / 365.25
     return float((np.log(tr[a].iloc[-1]) - np.log(tr[b].iloc[-1])) / years * 1e4)
+
+
+# Flag days where IOZ and STW returns differ by >50bp, which usually means bad data
+def flag_suspect_days(ret: pd.DataFrame, a: str = "IOZ", b: str = "STW", threshold: float = 0.005) -> pd.DataFrame:
+    """Days where two funds tracking the same index differ by more than `threshold` in total return.
+
+    For IOZ and STW this should essentially never happen. A flagged day usually means a
+    missing or misdated dividend, or a bad price print.
+    """
+    diff = ret[a] - ret[b]
+    out = pd.DataFrame({"diff_bp": diff * 1e4, f"{a}_bp": ret[a] * 1e4, f"{b}_bp": ret[b] * 1e4})
+    return out[diff.abs() > threshold]
+
+
+# Mark ±3 trading days around ex-dates so misdated Yahoo dividends can't create fake trades
+def dividend_blackout(index: pd.DatetimeIndex, div_cash: pd.DataFrame, days: int = 3) -> pd.Series:
+    """True on trading days within `days` trading days of either fund's (Yahoo) ex-date.
+
+    Yahoo's ex-dates are sometimes a day or two out. Crediting a dividend on the wrong day
+    creates a fake 1-2% jump in the spread that reverses a few days later, which a
+    mean-reversion rule would book as profit. The study therefore stays flat around ex-dates.
+    """
+    ex = div_cash.reindex(index).fillna(0.0).sum(axis=1) > 0
+    pos = np.flatnonzero(ex.values)
+    mask = np.zeros(len(index), dtype=bool)
+    for p in pos:
+        mask[max(0, p - days): p + days + 1] = True
+    return pd.Series(mask, index=index, name="blackout")

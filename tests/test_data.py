@@ -3,7 +3,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from etfpairs.data import dividends_on_trading_days, load_dividends, total_return_index
+#from etfpairs.data import dividends_on_trading_days, load_dividends, total_return_index
+
+# Import the functions under test, including the new data checks
+from etfpairs.data import (dividend_blackout, dividends_on_trading_days, flag_suspect_days,
+                           load_dividends, total_return_index)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,3 +43,21 @@ def test_dividend_on_non_trading_day_goes_to_next_trading_day():
 
 def test_duplicate_dividend_removed(tmp_path):
     f = tmp_path / "d.csv"
+
+
+# One dividend on day 8 with a 2-day window: only days 6-10 should be blacked out
+def test_blackout_marks_days_either_side():
+    idx = pd.bdate_range("2020-01-01", periods=15)
+    cash = pd.DataFrame(0.0, index=idx, columns=["A", "B"])
+    cash.iloc[7, 0] = 0.3
+    bo = dividend_blackout(idx, cash, days=2)
+    assert bo.values.tolist() == [False] * 5 + [True] * 5 + [False] * 5
+
+
+# A 70bp gap on day 2 should be the only day flagged
+def test_flag_suspect_days():
+    idx = pd.bdate_range("2020-01-01", periods=3)
+    ret = pd.DataFrame({"IOZ": [0.001, 0.010, 0.0], "STW": [0.001, 0.003, 0.0]}, index=idx)
+    f = flag_suspect_days(ret)
+    assert list(f.index) == [idx[1]]
+    assert f["diff_bp"].iloc[0] == pytest.approx(70.0)
